@@ -30,6 +30,20 @@ CATEGORIES = {
 def fmt(code):
     return f"{code} — {CATEGORIES.get(code, 'Categoría definida por usuario')}"
 
+# Descripciones oficiales de arXiv (arxiv.org/category_taxonomy)
+CATEGORIES_DESC = {
+    "cs.AI": "Covers all areas of AI except Vision, Robotics, Machine Learning, Multiagent Systems, and Computation and Language. Includes Expert Systems, Theorem Proving, Knowledge Representation, Planning, and Uncertainty in AI.",
+    "cs.CL": "Covers natural language processing. Includes computational approaches to human language: parsing, generation, machine translation, dialogue, information extraction, and related topics.",
+    "cs.CR": "Covers all aspects of cryptography, data security and access control, network security, security protocols, and privacy. Includes both theoretical and applied work.",
+    "cs.CV": "Covers image processing, computer vision, pattern recognition, and scene understanding. Includes object detection, image segmentation, 3D vision, video analysis, and visual learning.",
+    "cs.DS": "Covers design, analysis, and experimental evaluation of data structures and algorithms. Includes complexity analysis, combinatorial optimization, and graph algorithms.",
+    "cs.IT": "Covers theoretical and experimental aspects of information theory and coding. Includes channel capacity, source coding, error-correcting codes, and information-theoretic security.",
+    "cs.LG": "Papers on all aspects of machine learning research: supervised, unsupervised, reinforcement learning, bandit problems, robustness, explanation, fairness, and methodology. Also appropriate as primary category for applications of ML methods.",
+    "cs.NA": "Covers numerical methods, scientific computing, numerical linear algebra, approximation theory, and mathematical software. Includes error analysis and computational complexity of numerical algorithms.",
+    "cs.RO": "Covers robotics: manipulation, locomotion, sensors, perception, planning, control, learning, and human-robot interaction. Includes both theoretical and applied work on autonomous systems.",
+    "cs.SY": "Covers control theory and engineering, dynamical systems, stability analysis, optimization, and their applications. Includes networked control, hybrid systems, and real-time systems.",
+}
+
 # ─────────────────────────────────────────
 # GOOGLE SHEETS
 # ─────────────────────────────────────────
@@ -354,86 +368,73 @@ def screen_validate(df):
         with st.expander("Ver abstract"):
             st.write(paper["Resumen"])
 
-        st.markdown('<div class="sec" style="margin-top:.3rem">Categoría correcta</div>', unsafe_allow_html=True)
+        # ── Tarjeta de selección de categoría ──
+        # Determinar preselección:
+        #   modo edición  → etiqueta ya guardada
+        #   modo normal   → pred_zeroshot del modelo
+        custom_val = "__custom__"
+        cat_codes  = list(CATEGORIES.keys())
 
-        # ── Construir opciones ──
-        # Opción 0: confirmar predicción del modelo
-        # Opciones 1..N: otras categorías de la taxonomía
-        # Opción N+1: categoría personalizada
-        cat_codes   = list(CATEGORIES.keys())
-        confirm_val = f"__confirm__{pred_code}"
-        custom_val  = "__custom__"
-
-        # Etiqueta activa que se debe preseleccionar:
-        #   - modo edición  → etiqueta_experto ya guardada
-        #   - modo normal   → pred_zeroshot (predicción del modelo)
         if is_edit_mode and pd.notna(cur_etq) and cur_etq:
             preselect = cur_etq
         else:
-            preselect = pred_code   # preseleccionar siempre la predicción del modelo
+            preselect = pred_code
 
-        # Calcular default_idx
-        if preselect == pred_code:
-            default_idx = 0
-        elif preselect in cat_codes:
-            # índice dentro de cat_codes excluyendo pred_code
-            others = [c for c in cat_codes if c != pred_code]
-            default_idx = others.index(preselect) + 1 if preselect in others else 0
+        # Opciones del combo: todos los códigos + opción personalizada
+        combo_options = cat_codes + [custom_val]
+        combo_labels  = {c: f"{c} — {CATEGORIES[c]}" for c in cat_codes}
+        combo_labels[custom_val] = "Otra — ingresar código manualmente"
+
+        # default_idx para el selectbox
+        if preselect in cat_codes:
+            default_idx = cat_codes.index(preselect)
         else:
-            default_idx = len(cat_codes) + 1  # personalizada
+            default_idx = len(cat_codes)  # personalizada
 
-        # Lista de (value, label_corto, descripción_tooltip)
-        radio_items = [(confirm_val, f"✓ Confirmar: {pred_code}", CATEGORIES.get(pred_code, pred_code))]
-        for c in cat_codes:
-            if c != pred_code:
-                radio_items.append((c, c, CATEGORIES[c]))
-        radio_items.append((custom_val, "Otra — ingresar código manualmente", "Ingrese un código arXiv que no aparezca en la lista"))
+        # Clave única por artículo para que el estado se inicialice correctamente
+        sel_key = f"sel_{original_idx}"
+        if sel_key not in st.session_state:
+            st.session_state[sel_key] = combo_options[default_idx]
 
-        values = [v for v, _, _ in radio_items]
-        labels = [l for _, l, _ in radio_items]
-        tips   = [t for _, _, t in radio_items]
+        # Cabecera de la tarjeta: categoría actualmente seleccionada
+        sel_code = st.session_state.get(sel_key, combo_options[default_idx])
+        if sel_code == custom_val:
+            sel_display = "Categoría personalizada"
+            sel_desc    = "Ingrese el código arXiv en el campo de texto."
+        else:
+            sel_display = combo_labels.get(sel_code, sel_code)
+            sel_desc    = CATEGORIES_DESC.get(sel_code, "")
 
-        # Clave única por artículo — garantiza que al cambiar de artículo
-        # el radio se inicialice con el default correcto
-        radio_key = f"radio_{original_idx}"
-        if radio_key not in st.session_state:
-            st.session_state[radio_key] = values[default_idx]
-
-        # Streamlit radio con format_func que incluye descripción en el label
-        # El tooltip se muestra como panel descriptivo debajo de la opción activa
-        selection_raw = st.radio(
-            "",
-            options=values,
-            format_func=lambda v: next(
-                (f"{lbl}  —  {tip}" if v not in (confirm_val, custom_val) else lbl)
-                for vv, lbl, tip in radio_items if vv == v
-            ),
-            index=values.index(st.session_state[radio_key]) if st.session_state[radio_key] in values else default_idx,
-            label_visibility="collapsed",
-            key=radio_key,
-        )
-
-        # Descripción tooltip debajo de la opción activa
-        active_tip = next((t for v, _, t in radio_items if v == selection_raw), "")
         st.markdown(
-            f'<div style="font-size:.72rem;color:#888780;background:#F1EFE8;border-radius:5px;'
-            f'padding:3px 10px;margin:2px 0 6px;line-height:1.4">'
-            f'<b style="color:#444441">{selection_raw if selection_raw not in (confirm_val, custom_val) else (pred_code if selection_raw == confirm_val else "Personalizada")}</b>'
-            f' — {active_tip}</div>',
+            f'<div style="background:#FAFAF9;border:1.5px solid #1D9E75;border-radius:10px;padding:.9rem 1.1rem;margin-top:.4rem">'
+            f'<div class="sec">Categoría seleccionada</div>'
+            f'<div style="font-size:1rem;font-weight:500;color:#1D1C1A;margin:4px 0 2px">{sel_display}</div>'
+            f'<div style="font-size:.75rem;color:#5F5E5A;line-height:1.5;min-height:1.2rem">{sel_desc}</div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-        selection = selection_raw  # alias para el bloque de guardado
+        # Combo de selección
+        selection = st.selectbox(
+            "Cambiar categoría",
+            options=combo_options,
+            format_func=lambda v: combo_labels[v],
+            index=combo_options.index(sel_code) if sel_code in combo_options else default_idx,
+            label_visibility="collapsed",
+            key=sel_key,
+        )
 
+        # Campo personalizado (solo si se elige "Otra")
         custom_input = ""
         if selection == custom_val:
             default_custom = str(cur_etq) if (is_edit_mode and cur_etq and cur_etq not in CATEGORIES) else ""
-            custom_input = st.text_input("Código arXiv (ej. cs.DB):", value=default_custom, key="custom_in")
+            custom_input = st.text_input("Código arXiv (ej. cs.DB, cs.IR):", value=default_custom, key="custom_in")
 
-        bc1, bc2, _ = st.columns([1.2, 1, 2])
-        with bc1:
+        # Botones acción
+        ba1, ba2, _ = st.columns([1.3, 1, 2])
+        with ba1:
             save_clicked = st.button("Guardar →", type="primary", use_container_width=True)
-        with bc2:
+        with ba2:
             if is_edit_mode:
                 if st.button("Cancelar", use_container_width=True):
                     st.session_state.edit_idx = None
@@ -449,10 +450,8 @@ def screen_validate(df):
                     st.error("Escriba el código de categoría.")
                     return
                 final_label = custom_input.strip()
-            elif selection == confirm_val:
-                final_label = pred_code
             else:
-                final_label = selection  # es directamente el código (ej. "cs.LG")
+                final_label = selection  # directamente el código arXiv (ej. "cs.LG")
 
             ok = save_label(
                 paper_id=original_idx,
