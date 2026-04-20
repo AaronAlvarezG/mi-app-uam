@@ -7,9 +7,9 @@ from datetime import datetime
 # ─────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────
-INPUT_FILE  = "zeroshot_predictions_uam.parquet"
-SHEET_NAME  = "etiquetas_uam"
-SCOPES      = [
+INPUT_FILE = "zeroshot_predictions_uam.parquet"
+SHEET_NAME = "etiquetas_uam"
+SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
@@ -28,8 +28,7 @@ CATEGORIES = {
 }
 
 def fmt(code):
-    desc = CATEGORIES.get(code, "Categoría definida por usuario")
-    return f"{code} — {desc}"
+    return f"{code} — {CATEGORIES.get(code, 'Categoría definida por usuario')}"
 
 # ─────────────────────────────────────────
 # GOOGLE SHEETS
@@ -44,10 +43,8 @@ def get_sheet():
 
 
 def load_saved_labels():
-    """Devuelve dict {paper_id: etiqueta_experto} desde Google Sheets."""
     try:
-        sheet  = get_sheet()
-        records = sheet.get_all_records()
+        records = get_sheet().get_all_records()
         return {str(r["paper_id"]): r["etiqueta_experto"] for r in records if r.get("etiqueta_experto")}
     except Exception as e:
         st.warning(f"No se pudieron cargar etiquetas previas: {e}")
@@ -55,7 +52,6 @@ def load_saved_labels():
 
 
 def save_label(paper_id, autor, titulo, pred, etiqueta):
-    """Inserta o actualiza la fila correspondiente en Google Sheets."""
     try:
         sheet     = get_sheet()
         ids       = sheet.col_values(1)
@@ -72,7 +68,7 @@ def save_label(paper_id, autor, titulo, pred, etiqueta):
         return False
 
 # ─────────────────────────────────────────
-# CARGA DE DATOS
+# DATOS
 # ─────────────────────────────────────────
 @st.cache_data
 def load_data():
@@ -83,7 +79,6 @@ def load_data():
 
 
 def apply_saved_labels(df, saved):
-    """Fusiona etiquetas de Sheets en el DataFrame en memoria."""
     for pid, label in saved.items():
         try:
             df.loc[int(pid), "etiqueta_experto"] = label
@@ -92,311 +87,363 @@ def apply_saved_labels(df, saved):
     return df
 
 # ─────────────────────────────────────────
-# ESTILOS GLOBALES
+# CSS
 # ─────────────────────────────────────────
 def inject_css():
     st.markdown("""
     <style>
-    /* Fuente y fondo general */
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono&display=swap');
     html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
+    #MainMenu {visibility:hidden;} footer {visibility:hidden;} header {visibility:hidden;}
+    .block-container { max-width:1080px; padding-top:1rem !important; padding-bottom:1rem !important; }
 
-    /* Ocultar menú hamburguesa y footer de Streamlit */
-    #MainMenu {visibility: hidden;}
-    footer     {visibility: hidden;}
-    header     {visibility: hidden;}
+    .prog-bg   { background:#E5E3DE; border-radius:6px; height:6px; width:100%; margin:4px 0; }
+    .prog-fill { background:#1D9E75; border-radius:6px; height:6px; }
 
-    /* Contenedor principal más angosto y centrado */
-    .block-container {
-        max-width: 820px;
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-    }
+    .sec { font-size:.68rem; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+           color:#888780; margin-bottom:4px; margin-top:2px; }
 
-    /* Tarjeta artículo */
-    .paper-card {
-        background: #FAFAF9;
-        border: 1px solid #E5E3DE;
-        border-radius: 12px;
-        padding: 1.4rem 1.6rem;
-        margin-bottom: 1rem;
-    }
+    .pill      { display:inline-block; background:#EAF3DE; color:#27500A; font-size:.76rem;
+                 font-weight:500; padding:3px 11px; border-radius:20px;
+                 font-family:'IBM Plex Mono',monospace; }
+    .pill-warn { background:#FAEEDA; color:#633806; }
 
-    /* Pill de predicción */
-    .pred-pill {
-        display: inline-block;
-        background: #EAF3DE;
-        color: #27500A;
-        font-size: 0.82rem;
-        font-weight: 500;
-        padding: 4px 14px;
-        border-radius: 20px;
-        font-family: 'IBM Plex Mono', monospace;
-        letter-spacing: .02em;
-    }
+    .paper-card { background:#FAFAF9; border:1px solid #E5E3DE; border-radius:10px;
+                  padding:.9rem 1.1rem; margin-bottom:.5rem; }
 
-    /* Barra de progreso custom */
-    .prog-bar-bg {
-        background: #E5E3DE;
-        border-radius: 6px;
-        height: 8px;
-        width: 100%;
-        margin: 6px 0 2px;
-    }
-    .prog-bar-fill {
-        background: #1D9E75;
-        border-radius: 6px;
-        height: 8px;
-        transition: width .4s ease;
-    }
-
-    /* Encabezado de sección */
-    .section-head {
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-        color: #888780;
-        margin-bottom: .4rem;
-    }
-
-    /* Número grande de progreso */
-    .big-number {
-        font-size: 2.6rem;
-        font-weight: 300;
-        color: #1D9E75;
-        line-height: 1;
-    }
-
-    /* Tarjeta de artículo en lista de progreso */
-    .list-card {
-        border-left: 3px solid #E5E3DE;
-        padding: 6px 12px;
-        margin-bottom: 6px;
-        font-size: 0.88rem;
-        color: #5F5E5A;
-    }
-    .list-card.done {
-        border-left-color: #1D9E75;
-        color: #085041;
+    /* Botones laterales de artículos */
+    div[data-testid="stButton"] button {
+        text-align:left; white-space:normal; word-break:break-word;
+        font-size:.8rem; line-height:1.3; padding:5px 8px;
     }
 
     /* Botón primario */
     div[data-testid="stButton"] button[kind="primary"] {
-        background: #1D1C1A;
-        color: #FAFAF9;
-        border: none;
-        border-radius: 8px;
-        font-family: 'IBM Plex Sans', sans-serif;
-        font-weight: 500;
-        padding: .55rem 1.6rem;
-        transition: background .15s;
+        background:#1D1C1A; color:#FAFAF9; border:none; border-radius:7px;
+        font-family:'IBM Plex Sans',sans-serif; font-weight:500;
+        font-size:.85rem; transition:background .15s;
     }
-    div[data-testid="stButton"] button[kind="primary"]:hover {
-        background: #3a3836;
-    }
+    div[data-testid="stButton"] button[kind="primary"]:hover { background:#3a3836; }
 
-    /* Radio buttons más espaciados */
-    div[data-testid="stRadio"] label {
-        font-size: 0.9rem;
-        padding: 4px 0;
-    }
+    /* Radio compacto */
+    div[data-testid="stRadio"] label { font-size:.83rem; padding:1px 0; }
+    div[data-testid="stRadio"] > div { gap:1px !important; }
 
-    /* Toast de éxito */
-    .toast-ok {
-        background: #E1F5EE;
-        color: #085041;
-        border-radius: 8px;
-        padding: 10px 16px;
-        font-size: 0.88rem;
-        font-weight: 500;
-        margin-top: .5rem;
-    }
+    /* Tabla admin */
+    .admin-row { display:grid; grid-template-columns:1fr 60px 120px 90px;
+                 gap:8px; align-items:center; padding:6px 10px;
+                 border-bottom:0.5px solid #E5E3DE; font-size:.83rem; }
+    .admin-row.head { font-weight:600; font-size:.68rem; text-transform:uppercase;
+                      letter-spacing:.06em; color:#888780; }
+    .chip-done    { background:#EAF3DE; color:#27500A; border-radius:20px;
+                    padding:2px 10px; font-size:.72rem; font-weight:500; text-align:center; display:inline-block; }
+    .chip-partial { background:#FAEEDA; color:#633806; border-radius:20px;
+                    padding:2px 10px; font-size:.72rem; font-weight:500; text-align:center; display:inline-block; }
+    .chip-none    { background:#F1EFE8; color:#888780; border-radius:20px;
+                    padding:2px 10px; font-size:.72rem; font-weight:500; text-align:center; display:inline-block; }
+
+    details summary { font-size:.8rem; color:#888780; cursor:pointer; }
     </style>
     """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────
-# PANTALLAS
-# ─────────────────────────────────────────
 
+def prog_bar(pct):
+    return f'<div class="prog-bg"><div class="prog-fill" style="width:{pct}%"></div></div>'
+
+# ─────────────────────────────────────────
+# PANTALLA 0 — BIENVENIDA
+# ─────────────────────────────────────────
 def screen_welcome(df):
-    """Pantalla 1: selección de investigador."""
-    st.markdown("## Validación de Artículos · UAM-A")
-    st.markdown(
-        "Bienvenido. Seleccione su nombre para revisar y validar "
-        "las categorías asignadas automáticamente a sus artículos.",
-        help=None,
-    )
-    st.markdown("---")
+    h1, h2 = st.columns([4, 1])
+    with h1:
+        st.markdown("### Validación de Artículos · UAM-A")
+    with h2:
+        if st.button("Vista general →", use_container_width=True):
+            st.session_state.screen = "admin"
+            st.rerun()
 
+    st.markdown("Seleccione su nombre para comenzar.")
     authors = sorted(df["autor"].dropna().unique())
-    author  = st.selectbox("Investigador", options=["— seleccione —"] + list(authors), label_visibility="collapsed")
+    author  = st.selectbox("", options=["— seleccione —"] + list(authors))
 
     if author == "— seleccione —":
-        st.caption("↑ Elija su nombre para continuar")
+        st.caption("Elija su nombre en la lista para ver su progreso.")
         return
 
     author_df = df[df["autor"] == author]
     total     = len(author_df)
-    done      = author_df["etiqueta_experto"].notna().sum()
+    done      = int(author_df["etiqueta_experto"].notna().sum())
+    pct       = int(done / total * 100) if total else 100
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        pct = int(done / total * 100) if total else 100
-        st.markdown(f'<div class="big-number">{pct}%</div>', unsafe_allow_html=True)
-        st.caption(f"{done} de {total} artículos revisados")
-        bar = f'<div class="prog-bar-bg"><div class="prog-bar-fill" style="width:{pct}%"></div></div>'
-        st.markdown(bar, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f'<div class="section-head">Tus artículos</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        st.markdown(f'<div style="font-size:2rem;font-weight:300;color:#1D9E75;line-height:1">{pct}%</div>', unsafe_allow_html=True)
+        st.caption(f"{done} / {total} revisados")
+        st.markdown(prog_bar(pct), unsafe_allow_html=True)
+    with c2:
+        st.metric("Pendientes", total - done)
+        st.metric("Completados", done)
+    with c3:
+        st.markdown('<div class="sec">Tus artículos</div>', unsafe_allow_html=True)
         for _, row in author_df.iterrows():
-            css = "list-card done" if pd.notna(row["etiqueta_experto"]) else "list-card"
-            mark = "✓ " if pd.notna(row["etiqueta_experto"]) else ""
-            st.markdown(f'<div class="{css}">{mark}{row["titulo"][:80]}{"…" if len(row["titulo"])>80 else ""}</div>', unsafe_allow_html=True)
+            if pd.notna(row["etiqueta_experto"]):
+                st.markdown(f'<div style="font-size:.8rem;color:#085041;padding:2px 0">✓ {row["titulo"][:72]}{"…" if len(row["titulo"])>72 else ""}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="font-size:.8rem;color:#888780;padding:2px 0">○ {row["titulo"][:72]}{"…" if len(row["titulo"])>72 else ""}</div>', unsafe_allow_html=True)
 
     st.markdown("")
-    col_a, col_b = st.columns([1, 3])
-    with col_a:
-        if done == total:
-            if st.button("Ver resumen", type="primary", use_container_width=True):
-                st.session_state.author  = author
-                st.session_state.screen  = "done"
-                st.rerun()
+    btn_label = "Ver resumen" if done == total else "Comenzar revisión →"
+    target    = "done" if done == total else "validate"
+    cb, _ = st.columns([1, 3])
+    with cb:
+        if st.button(btn_label, type="primary", use_container_width=True):
+            st.session_state.author    = author
+            st.session_state.paper_idx = 0
+            st.session_state.edit_idx  = None
+            st.session_state.screen    = target
+            st.rerun()
+
+# ─────────────────────────────────────────
+# PANTALLA 1 — ADMIN
+# ─────────────────────────────────────────
+def screen_admin(df):
+    h1, h2 = st.columns([4, 1])
+    with h1:
+        st.markdown("### Avance general · UAM-A")
+    with h2:
+        if st.button("‹ Volver", use_container_width=True):
+            st.session_state.screen = "welcome"
+            st.rerun()
+
+    total_p  = len(df)
+    total_d  = int(df["etiqueta_experto"].notna().sum())
+    glob_pct = int(total_d / total_p * 100) if total_p else 0
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total artículos", total_p)
+    m2.metric("Validados", total_d)
+    m3.metric("Avance global", f"{glob_pct}%")
+    st.markdown(prog_bar(glob_pct), unsafe_allow_html=True)
+    st.markdown("---")
+
+    st.markdown(
+        '<div class="admin-row head">'
+        '<span>Investigador</span><span>Arts.</span><span>Progreso</span><span>Estado</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    authors = sorted(df["autor"].dropna().unique())
+    for author in authors:
+        a_df = df[df["autor"] == author]
+        tot  = len(a_df)
+        done = int(a_df["etiqueta_experto"].notna().sum())
+        pct  = int(done / tot * 100) if tot else 0
+
+        if done == tot:
+            chip = '<span class="chip-done">Completo</span>'
+        elif done == 0:
+            chip = '<span class="chip-none">Sin iniciar</span>'
         else:
-            if st.button("Comenzar revisión →", type="primary", use_container_width=True):
-                st.session_state.author      = author
-                st.session_state.paper_idx   = 0
-                st.session_state.screen      = "validate"
-                st.rerun()
+            chip = f'<span class="chip-partial">{pct}%</span>'
 
+        bar  = f'<div class="prog-bg" style="margin:0"><div class="prog-fill" style="width:{pct}%"></div></div>'
+        st.markdown(
+            f'<div class="admin-row"><span>{author}</span>'
+            f'<span style="text-align:center">{done}/{tot}</span>'
+            f'{bar}{chip}</div>',
+            unsafe_allow_html=True,
+        )
 
+# ─────────────────────────────────────────
+# PANTALLA 2 — VALIDACIÓN
+# ─────────────────────────────────────────
 def screen_validate(df):
-    """Pantalla 2: validación artículo por artículo."""
-    author       = st.session_state.author
-    author_df    = df[df["autor"] == author].copy()
-    pending      = author_df[author_df["etiqueta_experto"].isna()]
-    total_author = len(author_df)
-    done_count   = total_author - len(pending)
+    author    = st.session_state.author
+    author_df = df[df["autor"] == author].copy()
+    pending   = author_df[author_df["etiqueta_experto"].isna()]
+    done_df   = author_df[author_df["etiqueta_experto"].notna()]
+    total_a   = len(author_df)
+    done_n    = len(done_df)
 
     if len(pending) == 0:
         st.session_state.screen = "done"
         st.rerun()
         return
 
-    idx = st.session_state.get("paper_idx", 0)
-    if idx >= len(pending):
-        idx = 0
-        st.session_state.paper_idx = 0
+    edit_idx = st.session_state.get("edit_idx", None)
+    if edit_idx is not None:
+        paper        = author_df.loc[edit_idx]
+        is_edit_mode = True
+    else:
+        idx = st.session_state.get("paper_idx", 0)
+        if idx >= len(pending):
+            idx = 0
+            st.session_state.paper_idx = 0
+        paper        = pending.iloc[idx]
+        is_edit_mode = False
 
-    paper        = pending.iloc[idx]
     original_idx = paper.name
     pred_code    = paper["pred_zeroshot"]
 
-    # ── Encabezado ──
-    col_left, col_right = st.columns([3, 1])
-    with col_left:
-        st.markdown(f"**{author}**")
-        pct = int(done_count / total_author * 100)
-        bar = f'<div class="prog-bar-bg"><div class="prog-bar-fill" style="width:{pct}%"></div></div>'
-        st.markdown(bar, unsafe_allow_html=True)
-        st.caption(f"{done_count} de {total_author} revisados · artículo {idx+1} de {len(pending)} pendientes")
-    with col_right:
-        if st.button("‹ Cambiar usuario", use_container_width=True):
-            st.session_state.screen = "welcome"
-            st.rerun()
+    # ── Layout 2 columnas ──
+    col_list, col_form = st.columns([1, 2.6], gap="medium")
 
-    st.markdown("---")
+    # ── LISTA LATERAL ──
+    with col_list:
+        pct = int(done_n / total_a * 100)
+        st.markdown(f'<div style="font-size:.82rem;font-weight:500">{author.split(",")[0]}</div>', unsafe_allow_html=True)
+        st.markdown(prog_bar(pct), unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:.7rem;color:#888780;margin-bottom:.5rem">{done_n}/{total_a} revisados</div>', unsafe_allow_html=True)
 
-    # ── Tarjeta del artículo ──
-    st.markdown(f'<div class="paper-card">'
-                f'<div class="section-head">Título</div>'
-                f'<p style="font-size:1.05rem;font-weight:500;margin:4px 0 12px">{paper["titulo"]}</p>'
-                f'<div class="section-head">Predicción del modelo</div>'
-                f'<span class="pred-pill">{fmt(pred_code)}</span>'
-                f'</div>', unsafe_allow_html=True)
-
-    with st.expander("Ver resumen (abstract)"):
-        st.write(paper["Resumen"])
-
-    st.markdown("---")
-    st.markdown('<div class="section-head">Seleccione la categoría correcta</div>', unsafe_allow_html=True)
-
-    confirm_label = f"✓  Confirmar: {fmt(pred_code)}"
-    other_labels  = [fmt(c) for c in CATEGORIES if c != pred_code]
-    custom_label  = "Ninguna de las anteriores — ingresar nueva categoría"
-    options       = [confirm_label] + other_labels + [custom_label]
-
-    selection = st.radio("Categoría", options=options, label_visibility="collapsed")
-
-    custom_input = ""
-    if selection == custom_label:
-        custom_input = st.text_input("Código de categoría arXiv (ej. cs.DB, cs.IR):", key="custom_input")
-
-    st.markdown("")
-    col_save, col_skip, _ = st.columns([1.2, 1, 3])
-
-    with col_save:
-        save_clicked = st.button("Guardar →", type="primary", use_container_width=True)
-    with col_skip:
-        if idx + 1 < len(pending):
-            if st.button("Saltar", use_container_width=True):
-                st.session_state.paper_idx += 1
+        st.markdown('<div class="sec">Pendientes</div>', unsafe_allow_html=True)
+        for i, (ridx, row) in enumerate(pending.iterrows()):
+            active = (not is_edit_mode) and (i == st.session_state.get("paper_idx", 0))
+            label  = ("▶ " if active else "") + row["titulo"][:52] + ("…" if len(row["titulo"]) > 52 else "")
+            if st.button(label, key=f"p_{ridx}", use_container_width=True):
+                st.session_state.paper_idx = i
+                st.session_state.edit_idx  = None
                 st.rerun()
 
-    if save_clicked:
-        if selection == custom_label:
-            if not custom_input.strip():
-                st.error("Escriba el código de categoría antes de guardar.")
-                return
-            final_label = custom_input.strip()
-        elif selection.startswith("✓"):
-            final_label = pred_code
-        else:
-            final_label = selection.split(" — ")[0]
+        if len(done_df) > 0:
+            st.markdown('<div class="sec" style="margin-top:.5rem">Clasificados</div>', unsafe_allow_html=True)
+            for ridx, row in done_df.iterrows():
+                active = is_edit_mode and (ridx == edit_idx)
+                label  = ("✎ " if active else "✓ ") + row["titulo"][:52] + ("…" if len(row["titulo"]) > 52 else "")
+                if st.button(label, key=f"d_{ridx}", use_container_width=True):
+                    st.session_state.edit_idx = ridx
+                    st.rerun()
 
-        ok = save_label(
-            paper_id=original_idx,
-            autor=author,
-            titulo=paper["titulo"],
-            pred=pred_code,
-            etiqueta=final_label,
-        )
-        if ok:
-            df.loc[original_idx, "etiqueta_experto"] = final_label
-            st.markdown('<div class="toast-ok">Guardado correctamente.</div>', unsafe_allow_html=True)
-            st.session_state.paper_idx = idx  # pending se reduce, idx sigue apuntando al siguiente
+        st.markdown("")
+        if st.button("‹ Salir", use_container_width=True):
+            st.session_state.screen   = "welcome"
+            st.session_state.edit_idx = None
             st.rerun()
 
+    # ── FORMULARIO ──
+    with col_form:
+        if is_edit_mode:
+            st.markdown(
+                '<div style="font-size:.7rem;background:#FAEEDA;color:#633806;'
+                'border-radius:5px;padding:3px 10px;display:inline-block;margin-bottom:.4rem">'
+                '✎ Modo corrección — editando artículo ya clasificado</div>',
+                unsafe_allow_html=True,
+            )
 
+        cur_etq = paper.get("etiqueta_experto", "")
+        st.markdown(
+            f'<div class="paper-card">'
+            f'<div class="sec">Título</div>'
+            f'<p style="font-size:.93rem;font-weight:500;margin:3px 0 8px;line-height:1.35">{paper["titulo"]}</p>'
+            f'<div class="sec">Predicción del modelo</div>'
+            f'<span class="pill">{fmt(pred_code)}</span>'
+            f'{"<span style=margin-left:8px class=pill pill-warn>Actual: " + str(cur_etq) + "</span>" if is_edit_mode and cur_etq else ""}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.expander("Ver abstract"):
+            st.write(paper["Resumen"])
+
+        st.markdown('<div class="sec" style="margin-top:.3rem">Categoría correcta</div>', unsafe_allow_html=True)
+
+        confirm_label = f"✓ Confirmar: {fmt(pred_code)}"
+        other_labels  = [fmt(c) for c in CATEGORIES if c != pred_code]
+        custom_label  = "Otra — ingresar código manualmente"
+        options       = [confirm_label] + other_labels + [custom_label]
+
+        default_idx = 0
+        if is_edit_mode and pd.notna(cur_etq) and cur_etq:
+            if cur_etq == pred_code:
+                default_idx = 0
+            elif fmt(cur_etq) in other_labels:
+                default_idx = other_labels.index(fmt(cur_etq)) + 1
+            else:
+                default_idx = len(options) - 1
+
+        selection = st.radio("", options=options, index=default_idx, label_visibility="collapsed")
+
+        custom_input = ""
+        if selection == custom_label:
+            default_custom = str(cur_etq) if (is_edit_mode and cur_etq) else ""
+            custom_input = st.text_input("Código arXiv (ej. cs.DB):", value=default_custom, key="custom_in")
+
+        bc1, bc2, _ = st.columns([1.2, 1, 2])
+        with bc1:
+            save_clicked = st.button("Guardar →", type="primary", use_container_width=True)
+        with bc2:
+            if is_edit_mode:
+                if st.button("Cancelar", use_container_width=True):
+                    st.session_state.edit_idx = None
+                    st.rerun()
+            elif st.session_state.get("paper_idx", 0) + 1 < len(pending):
+                if st.button("Saltar", use_container_width=True):
+                    st.session_state.paper_idx += 1
+                    st.rerun()
+
+        if save_clicked:
+            if selection == custom_label:
+                if not custom_input.strip():
+                    st.error("Escriba el código de categoría.")
+                    return
+                final_label = custom_input.strip()
+            elif selection.startswith("✓"):
+                final_label = pred_code
+            else:
+                final_label = selection.split(" — ")[0]
+
+            ok = save_label(
+                paper_id=original_idx,
+                autor=author,
+                titulo=paper["titulo"],
+                pred=pred_code,
+                etiqueta=final_label,
+            )
+            if ok:
+                df.loc[original_idx, "etiqueta_experto"] = final_label
+                st.session_state.edit_idx = None
+                st.rerun()
+
+# ─────────────────────────────────────────
+# PANTALLA 3 — COMPLETADO
+# ─────────────────────────────────────────
 def screen_done(df):
-    """Pantalla 3: felicitación al terminar."""
     author    = st.session_state.author
     author_df = df[df["autor"] == author]
     total     = len(author_df)
 
-    st.markdown("## ¡Revisión completada!")
-    st.success(f"Ha validado los {total} artículos asignados a su perfil. Muchas gracias por su participación.")
-
+    st.markdown("### ¡Revisión completada!")
+    st.success(f"Ha validado los {total} artículos asignados. Muchas gracias por su participación.")
     st.markdown("---")
-    st.markdown('<div class="section-head">Resumen de sus etiquetas</div>', unsafe_allow_html=True)
 
+    st.markdown('<div class="sec">Resumen de etiquetas asignadas</div>', unsafe_allow_html=True)
     for _, row in author_df.iterrows():
-        etq = row.get("etiqueta_experto", "—")
-        match = "✓" if etq == row["pred_zeroshot"] else "✎"
-        color = "#085041" if match == "✓" else "#633806"
+        etq   = row.get("etiqueta_experto", "—")
+        match = etq == row["pred_zeroshot"]
+        icon  = "✓" if match else "✎"
+        color = "#085041" if match else "#633806"
         st.markdown(
-            f'<div class="list-card done" style="display:flex;justify-content:space-between">'
-            f'<span>{row["titulo"][:70]}{"…" if len(row["titulo"])>70 else ""}</span>'
-            f'<span style="color:{color};font-family:monospace;font-size:.8rem;white-space:nowrap;margin-left:12px">{match} {etq}</span>'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:5px 8px;border-left:3px solid #1D9E75;margin-bottom:4px;font-size:.82rem">'
+            f'<span style="color:#1D1C1A">{row["titulo"][:75]}{"…" if len(row["titulo"])>75 else ""}</span>'
+            f'<span style="color:{color};font-family:monospace;font-size:.72rem;white-space:nowrap;margin-left:10px">{icon} {etq}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown("")
-    if st.button("‹ Volver al inicio", type="primary"):
-        st.session_state.screen = "welcome"
-        st.session_state.author = None
-        st.rerun()
+    c1, c2, _ = st.columns([1, 1.4, 2])
+    with c1:
+        if st.button("‹ Inicio", type="primary", use_container_width=True):
+            st.session_state.screen = "welcome"
+            st.session_state.author = None
+            st.rerun()
+    with c2:
+        if st.button("Corregir etiquetas", use_container_width=True):
+            st.session_state.screen   = "validate"
+            st.session_state.edit_idx = None
+            st.rerun()
 
 # ─────────────────────────────────────────
 # MAIN
@@ -405,31 +452,30 @@ def main():
     st.set_page_config(
         page_title="Validación UAM-A",
         page_icon="📄",
-        layout="centered",
+        layout="wide",
     )
     inject_css()
 
-    # Inicializar estado de navegación
     if "screen" not in st.session_state:
         st.session_state.screen    = "welcome"
         st.session_state.author    = None
         st.session_state.paper_idx = 0
+        st.session_state.edit_idx  = None
 
-    # Cargar datos
     try:
         df = load_data()
     except FileNotFoundError:
         st.error(f"No se encontró el archivo: {INPUT_FILE}")
         return
 
-    # Aplicar etiquetas guardadas en Sheets
     saved = load_saved_labels()
     df    = apply_saved_labels(df, saved)
 
-    # Enrutador de pantallas
     screen = st.session_state.screen
     if screen == "welcome":
         screen_welcome(df)
+    elif screen == "admin":
+        screen_admin(df)
     elif screen == "validate":
         screen_validate(df)
     elif screen == "done":
