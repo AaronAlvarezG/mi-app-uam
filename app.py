@@ -1,13 +1,19 @@
 import streamlit as st
 import pandas as pd
-import os
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 
-# --- CONFIGURACIÓN ---
-# Archivos de entrada y salida
-INPUT_FILE = "zeroshot_predictions_uam.parquet"
-OUTPUT_FILE = "uam_a_etiquetado_final_expertos.parquet"
+# ─────────────────────────────────────────
+# CONFIGURACIÓN
+# ─────────────────────────────────────────
+INPUT_FILE  = "zeroshot_predictions_uam.parquet"
+SHEET_NAME  = "etiquetas_uam"
+SCOPES      = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
-# Taxonomía permitida con descripciones completas
 CATEGORIES = {
     "cs.AI": "Artificial Intelligence",
     "cs.CL": "Computation and Language",
@@ -18,223 +24,417 @@ CATEGORIES = {
     "cs.LG": "Machine Learning",
     "cs.NA": "Numerical Analysis",
     "cs.RO": "Robotics",
-    "cs.SY": "Systems and Control"
+    "cs.SY": "Systems and Control",
 }
 
-# Función auxiliar para formatear la visualización (Código - Descripción)
-def format_category(code):
-    # Si el código no está en nuestro diccionario base (porque es uno nuevo ingresado por el usuario),
-    # intentamos mantener el formato, o devolvemos solo el código si no hay descripción conocida.
-    desc = CATEGORIES.get(code, "Categoria definida por usuario")
-    return f"{code} - {desc}"
+def fmt(code):
+    desc = CATEGORIES.get(code, "Categoría definida por usuario")
+    return f"{code} — {desc}"
 
-# --- FUNCIONES DE CARGA Y GUARDADO ---
+# ─────────────────────────────────────────
+# GOOGLE SHEETS
+# ─────────────────────────────────────────
+@st.cache_resource
+def get_sheet():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=SCOPES
+    )
+    client = gspread.authorize(creds)
+    return client.open(SHEET_NAME).sheet1
 
-@st.cache_data(ttl=60)
-def load_data():
-    """
-    Carga el dataset original y aplica las etiquetas experto existentes
-    del archivo de salida si este ya existe.
-    """
-    if not os.path.exists(INPUT_FILE):
-        st.error(f"No se encontró el archivo de entrada: {INPUT_FILE}")
-        return None
 
-    df = pd.read_parquet(INPUT_FILE)
-    
-    if 'etiqueta_experto' not in df.columns:
-        df['etiqueta_experto'] = None
-
-    if os.path.exists(OUTPUT_FILE):
-        try:
-            df_saved = pd.read_parquet(OUTPUT_FILE)
-            if 'etiqueta_experto' in df_saved.columns:
-                df['etiqueta_experto'].update(df_saved['etiqueta_experto'])
-        except Exception as e:
-            st.warning(f"Error leyendo guardado previo: {e}")
-
-    return df
-
-def save_progress(df):
-    """
-    Guarda el estado actual del dataframe.
-    """
+def load_saved_labels():
+    """Devuelve dict {paper_id: etiqueta_experto} desde Google Sheets."""
     try:
-        df.to_parquet(OUTPUT_FILE, index=True)
+        sheet  = get_sheet()
+        records = sheet.get_all_records()
+        return {str(r["paper_id"]): r["etiqueta_experto"] for r in records if r.get("etiqueta_experto")}
+    except Exception as e:
+        st.warning(f"No se pudieron cargar etiquetas previas: {e}")
+        return {}
+
+
+def save_label(paper_id, autor, titulo, pred, etiqueta):
+    """Inserta o actualiza la fila correspondiente en Google Sheets."""
+    try:
+        sheet     = get_sheet()
+        ids       = sheet.col_values(1)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row       = [str(paper_id), autor, titulo, pred, etiqueta, timestamp]
+        if str(paper_id) in ids:
+            idx = ids.index(str(paper_id)) + 1
+            sheet.update(f"A{idx}:F{idx}", [row])
+        else:
+            sheet.append_row(row)
         return True
     except Exception as e:
-        st.error(f"Error al guardar el progreso: {e}")
+        st.error(f"Error al guardar: {e}")
         return False
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(
-    page_title="Validacion de Articulos UAM-A",
-    page_icon=":hat:",
-    layout="wide"
-)
+# ─────────────────────────────────────────
+# CARGA DE DATOS
+# ─────────────────────────────────────────
+@st.cache_data
+def load_data():
+    df = pd.read_parquet(INPUT_FILE)
+    if "etiqueta_experto" not in df.columns:
+        df["etiqueta_experto"] = None
+    return df
 
-st.title("Validacion de Clasificacion de Articulos")
-st.markdown("""
-Herramienta para que los investigadores validen las categorias asignadas automaticamente a sus articulos.
-Seleccione su nombre para comenzar.
-""")
 
-# --- LÓGICA PRINCIPAL ---
+def apply_saved_labels(df, saved):
+    """Fusiona etiquetas de Sheets en el DataFrame en memoria."""
+    for pid, label in saved.items():
+        try:
+            df.loc[int(pid), "etiqueta_experto"] = label
+        except Exception:
+            pass
+    return df
 
-df_main = load_data()
+# ─────────────────────────────────────────
+# ESTILOS GLOBALES
+# ─────────────────────────────────────────
+def inject_css():
+    st.markdown("""
+    <style>
+    /* Fuente y fondo general */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono&display=swap');
+    html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 
-if df_main is not None:
-    # 1. Sidebar: Selección de Usuario
-    st.sidebar.header("Identificacion")
-    
-    authors = sorted(df_main['autor'].dropna().unique())
-    
-    if 'selected_author' not in st.session_state:
-        st.session_state.selected_author = authors[0] if authors else None
+    /* Ocultar menú hamburguesa y footer de Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer     {visibility: hidden;}
+    header     {visibility: hidden;}
 
-    selected_author = st.sidebar.selectbox(
-        "Seleccione su nombre:",
-        options=authors,
-        index=authors.index(st.session_state.selected_author) if st.session_state.selected_author in authors else 0,
-        key="author_selector"
+    /* Contenedor principal más angosto y centrado */
+    .block-container {
+        max-width: 820px;
+        padding-top: 2.5rem;
+        padding-bottom: 3rem;
+    }
+
+    /* Tarjeta artículo */
+    .paper-card {
+        background: #FAFAF9;
+        border: 1px solid #E5E3DE;
+        border-radius: 12px;
+        padding: 1.4rem 1.6rem;
+        margin-bottom: 1rem;
+    }
+
+    /* Pill de predicción */
+    .pred-pill {
+        display: inline-block;
+        background: #EAF3DE;
+        color: #27500A;
+        font-size: 0.82rem;
+        font-weight: 500;
+        padding: 4px 14px;
+        border-radius: 20px;
+        font-family: 'IBM Plex Mono', monospace;
+        letter-spacing: .02em;
+    }
+
+    /* Barra de progreso custom */
+    .prog-bar-bg {
+        background: #E5E3DE;
+        border-radius: 6px;
+        height: 8px;
+        width: 100%;
+        margin: 6px 0 2px;
+    }
+    .prog-bar-fill {
+        background: #1D9E75;
+        border-radius: 6px;
+        height: 8px;
+        transition: width .4s ease;
+    }
+
+    /* Encabezado de sección */
+    .section-head {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: #888780;
+        margin-bottom: .4rem;
+    }
+
+    /* Número grande de progreso */
+    .big-number {
+        font-size: 2.6rem;
+        font-weight: 300;
+        color: #1D9E75;
+        line-height: 1;
+    }
+
+    /* Tarjeta de artículo en lista de progreso */
+    .list-card {
+        border-left: 3px solid #E5E3DE;
+        padding: 6px 12px;
+        margin-bottom: 6px;
+        font-size: 0.88rem;
+        color: #5F5E5A;
+    }
+    .list-card.done {
+        border-left-color: #1D9E75;
+        color: #085041;
+    }
+
+    /* Botón primario */
+    div[data-testid="stButton"] button[kind="primary"] {
+        background: #1D1C1A;
+        color: #FAFAF9;
+        border: none;
+        border-radius: 8px;
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-weight: 500;
+        padding: .55rem 1.6rem;
+        transition: background .15s;
+    }
+    div[data-testid="stButton"] button[kind="primary"]:hover {
+        background: #3a3836;
+    }
+
+    /* Radio buttons más espaciados */
+    div[data-testid="stRadio"] label {
+        font-size: 0.9rem;
+        padding: 4px 0;
+    }
+
+    /* Toast de éxito */
+    .toast-ok {
+        background: #E1F5EE;
+        color: #085041;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 0.88rem;
+        font-weight: 500;
+        margin-top: .5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
+# PANTALLAS
+# ─────────────────────────────────────────
+
+def screen_welcome(df):
+    """Pantalla 1: selección de investigador."""
+    st.markdown("## Validación de Artículos · UAM-A")
+    st.markdown(
+        "Bienvenido. Seleccione su nombre para revisar y validar "
+        "las categorías asignadas automáticamente a sus artículos.",
+        help=None,
     )
-    
-    if selected_author != st.session_state.selected_author:
-        st.session_state.selected_author = selected_author
-        st.session_state.current_paper_idx = 0
+    st.markdown("---")
+
+    authors = sorted(df["autor"].dropna().unique())
+    author  = st.selectbox("Investigador", options=["— seleccione —"] + list(authors), label_visibility="collapsed")
+
+    if author == "— seleccione —":
+        st.caption("↑ Elija su nombre para continuar")
+        return
+
+    author_df = df[df["autor"] == author]
+    total     = len(author_df)
+    done      = author_df["etiqueta_experto"].notna().sum()
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        pct = int(done / total * 100) if total else 100
+        st.markdown(f'<div class="big-number">{pct}%</div>', unsafe_allow_html=True)
+        st.caption(f"{done} de {total} artículos revisados")
+        bar = f'<div class="prog-bar-bg"><div class="prog-bar-fill" style="width:{pct}%"></div></div>'
+        st.markdown(bar, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="section-head">Tus artículos</div>', unsafe_allow_html=True)
+        for _, row in author_df.iterrows():
+            css = "list-card done" if pd.notna(row["etiqueta_experto"]) else "list-card"
+            mark = "✓ " if pd.notna(row["etiqueta_experto"]) else ""
+            st.markdown(f'<div class="{css}">{mark}{row["titulo"][:80]}{"…" if len(row["titulo"])>80 else ""}</div>', unsafe_allow_html=True)
+
+    st.markdown("")
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        if done == total:
+            if st.button("Ver resumen", type="primary", use_container_width=True):
+                st.session_state.author  = author
+                st.session_state.screen  = "done"
+                st.rerun()
+        else:
+            if st.button("Comenzar revisión →", type="primary", use_container_width=True):
+                st.session_state.author      = author
+                st.session_state.paper_idx   = 0
+                st.session_state.screen      = "validate"
+                st.rerun()
+
+
+def screen_validate(df):
+    """Pantalla 2: validación artículo por artículo."""
+    author       = st.session_state.author
+    author_df    = df[df["autor"] == author].copy()
+    pending      = author_df[author_df["etiqueta_experto"].isna()]
+    total_author = len(author_df)
+    done_count   = total_author - len(pending)
+
+    if len(pending) == 0:
+        st.session_state.screen = "done"
         st.rerun()
+        return
 
-    # 2. Filtrar datos del autor
-    author_data = df_main[df_main['autor'] == selected_author].copy()
-    
-    labeled_papers = author_data[author_data['etiqueta_experto'].notna()]
-    unlabeled_papers = author_data[author_data['etiqueta_experto'].isna()]
+    idx = st.session_state.get("paper_idx", 0)
+    if idx >= len(pending):
+        idx = 0
+        st.session_state.paper_idx = 0
 
-    total_papers = len(author_data)
-    labeled_count = len(labeled_papers)
-    progress_percent = (labeled_count / total_papers) * 100 if total_papers > 0 else 100
+    paper        = pending.iloc[idx]
+    original_idx = paper.name
+    pred_code    = paper["pred_zeroshot"]
 
-    # Mostrar progreso en Sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Tu Progreso")
-    st.sidebar.metric("Articulos Revisados", f"{labeled_count} / {total_papers}")
-    st.sidebar.progress(progress_percent / 100)
-    
-    if st.sidebar.button("Cerrar Sesion / Cambiar Usuario"):
-        st.session_state.selected_author = None
-        st.rerun()
+    # ── Encabezado ──
+    col_left, col_right = st.columns([3, 1])
+    with col_left:
+        st.markdown(f"**{author}**")
+        pct = int(done_count / total_author * 100)
+        bar = f'<div class="prog-bar-bg"><div class="prog-bar-fill" style="width:{pct}%"></div></div>'
+        st.markdown(bar, unsafe_allow_html=True)
+        st.caption(f"{done_count} de {total_author} revisados · artículo {idx+1} de {len(pending)} pendientes")
+    with col_right:
+        if st.button("‹ Cambiar usuario", use_container_width=True):
+            st.session_state.screen = "welcome"
+            st.rerun()
 
-    # 3. Interfaz de Validación
-    if len(unlabeled_papers) == 0:
-        st.success(f"Felicidades {selected_author}. Ha revisado todos sus articulos asignados.")
-        st.info("No hay mas articulos pendientes de validacion para este perfil.")
-    else:
-        if 'current_paper_idx' not in st.session_state:
-            st.session_state.current_paper_idx = 0
-        
-        if st.session_state.current_paper_idx >= len(unlabeled_papers):
-            st.session_state.current_paper_idx = 0
+    st.markdown("---")
 
-        current_paper_rel_idx = st.session_state.current_paper_idx
-        current_paper_series = unlabeled_papers.iloc[current_paper_rel_idx]
-        original_index = current_paper_series.name
+    # ── Tarjeta del artículo ──
+    st.markdown(f'<div class="paper-card">'
+                f'<div class="section-head">Título</div>'
+                f'<p style="font-size:1.05rem;font-weight:500;margin:4px 0 12px">{paper["titulo"]}</p>'
+                f'<div class="section-head">Predicción del modelo</div>'
+                f'<span class="pred-pill">{fmt(pred_code)}</span>'
+                f'</div>', unsafe_allow_html=True)
 
-        st.markdown(f"### Articulo {current_paper_rel_idx + 1} de {len(unlabeled_papers)} pendientes")
+    with st.expander("Ver resumen (abstract)"):
+        st.write(paper["Resumen"])
 
-        # --- TARJETA DEL ARTÍCULO ---
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.subheader("Titulo")
-            st.write(current_paper_series['titulo'])
-            
-            with st.expander("Ver Resumen (Abstract)"):
-                st.write(current_paper_series['Resumen'])
+    st.markdown("---")
+    st.markdown('<div class="section-head">Seleccione la categoría correcta</div>', unsafe_allow_html=True)
 
-        with col2:
-            st.subheader("Prediccion del Modelo")
-            
-            # Obtener código y descripción
-            pred_code = current_paper_series['pred_zeroshot']
-            pred_display = format_category(pred_code)
-            
-            # Mostrar la predicción completa
-            st.markdown(f"<div style='background-color:#f0f2f6;padding:10px;border-radius:5px;text-align:center;font-weight:bold;font-size:1.1em;'>{pred_display}</div>", unsafe_allow_html=True)
+    confirm_label = f"✓  Confirmar: {fmt(pred_code)}"
+    other_labels  = [fmt(c) for c in CATEGORIES if c != pred_code]
+    custom_label  = "Ninguna de las anteriores — ingresar nueva categoría"
+    options       = [confirm_label] + other_labels + [custom_label]
 
-        st.markdown("---")
+    selection = st.radio("Categoría", options=options, label_visibility="collapsed")
 
-        # --- SECCIÓN DE ACCIÓN ---
-        st.subheader("Validacion Experto")
+    custom_input = ""
+    if selection == custom_label:
+        custom_input = st.text_input("Código de categoría arXiv (ej. cs.DB, cs.IR):", key="custom_input")
 
-        # Construir opciones para el radio button
-        confirm_option = f"Confirmar: {pred_display}"
-        
-        # Lista completa de categorías con descripción
-        cat_options = [format_category(code) for code in CATEGORIES.keys()]
-        
-        # Nueva opción para agregar categoría personalizada
-        custom_option = "Ninguna de las anteriores (Ingresar nueva categoria)"
-        
-        options = [confirm_option] + cat_options + [custom_option]
-        
-        selection = st.radio(
-            "Seleccione la categoria correcta:",
-            options=options,
-            index=0,
-            label_visibility="collapsed"
+    st.markdown("")
+    col_save, col_skip, _ = st.columns([1.2, 1, 3])
+
+    with col_save:
+        save_clicked = st.button("Guardar →", type="primary", use_container_width=True)
+    with col_skip:
+        if idx + 1 < len(pending):
+            if st.button("Saltar", use_container_width=True):
+                st.session_state.paper_idx += 1
+                st.rerun()
+
+    if save_clicked:
+        if selection == custom_label:
+            if not custom_input.strip():
+                st.error("Escriba el código de categoría antes de guardar.")
+                return
+            final_label = custom_input.strip()
+        elif selection.startswith("✓"):
+            final_label = pred_code
+        else:
+            final_label = selection.split(" — ")[0]
+
+        ok = save_label(
+            paper_id=original_idx,
+            autor=author,
+            titulo=paper["titulo"],
+            pred=pred_code,
+            etiqueta=final_label,
+        )
+        if ok:
+            df.loc[original_idx, "etiqueta_experto"] = final_label
+            st.markdown('<div class="toast-ok">Guardado correctamente.</div>', unsafe_allow_html=True)
+            st.session_state.paper_idx = idx  # pending se reduce, idx sigue apuntando al siguiente
+            st.rerun()
+
+
+def screen_done(df):
+    """Pantalla 3: felicitación al terminar."""
+    author    = st.session_state.author
+    author_df = df[df["autor"] == author]
+    total     = len(author_df)
+
+    st.markdown("## ¡Revisión completada!")
+    st.success(f"Ha validado los {total} artículos asignados a su perfil. Muchas gracias por su participación.")
+
+    st.markdown("---")
+    st.markdown('<div class="section-head">Resumen de sus etiquetas</div>', unsafe_allow_html=True)
+
+    for _, row in author_df.iterrows():
+        etq = row.get("etiqueta_experto", "—")
+        match = "✓" if etq == row["pred_zeroshot"] else "✎"
+        color = "#085041" if match == "✓" else "#633806"
+        st.markdown(
+            f'<div class="list-card done" style="display:flex;justify-content:space-between">'
+            f'<span>{row["titulo"][:70]}{"…" if len(row["titulo"])>70 else ""}</span>'
+            f'<span style="color:{color};font-family:monospace;font-size:.8rem;white-space:nowrap;margin-left:12px">{match} {etq}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
-        # Campo de entrada condicional para la categoría personalizada
-        custom_category_input = ""
-        if selection == custom_option:
-            custom_category_input = st.text_input(
-                "Ingrese la categoria correcta (ej. cs.DB, cs.IR, etc.):", 
-                key="custom_cat_input",
-                help="Escriba el codigo de la categoria arXiv o una descripcion breve."
-            )
+    st.markdown("")
+    if st.button("‹ Volver al inicio", type="primary"):
+        st.session_state.screen = "welcome"
+        st.session_state.author = None
+        st.rerun()
 
-        # Botón de Guardar
-        col_save, col_skip = st.columns([1, 4])
-        with col_save:
-            save_button = st.button("Guardar Evaluacion", type="primary", use_container_width=True)
-        
-        # Lógica al presionar guardar
-        if save_button:
-            final_label = None
-            error = False
-            
-            if selection == custom_option:
-                # Validar que el campo no este vacio
-                if not custom_category_input or custom_category_input.strip() == "":
-                    st.error("Por favor, escriba la categoria correcta en el campo de texto.")
-                    error = True
-                else:
-                    final_label = custom_category_input.strip()
-            
-            elif selection.startswith("Confirmar"):
-                final_label = pred_code 
-            
-            else:
-                # Es una categoría de la taxonomía (formato "cs.AI - Artificial Intelligence")
-                # Extraemos solo la parte antes del guion
-                final_label = selection.split(" - ")[0]
+# ─────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────
+def main():
+    st.set_page_config(
+        page_title="Validación UAM-A",
+        page_icon="📄",
+        layout="centered",
+    )
+    inject_css()
 
-            # Si no hay errores, guardamos
-            if not error:
-                # Actualizar el DataFrame principal
-                df_main.loc[original_index, 'etiqueta_experto'] = final_label
-                
-                # Guardar en disco
-                if save_progress(df_main):
-                    st.toast("Guardado exitosamente!", icon="✅")
-                    
-                    # Avanzar al siguiente artículo
-                    st.session_state.current_paper_idx += 1
-                    
-                    if st.session_state.current_paper_idx >= len(unlabeled_papers):
-                        st.session_state.current_paper_idx = 0
-                    
-                    st.rerun()
+    # Inicializar estado de navegación
+    if "screen" not in st.session_state:
+        st.session_state.screen    = "welcome"
+        st.session_state.author    = None
+        st.session_state.paper_idx = 0
 
-else:
-    st.error("No se pudieron cargar los datos. Verifique que el archivo .parquet exista.")
+    # Cargar datos
+    try:
+        df = load_data()
+    except FileNotFoundError:
+        st.error(f"No se encontró el archivo: {INPUT_FILE}")
+        return
+
+    # Aplicar etiquetas guardadas en Sheets
+    saved = load_saved_labels()
+    df    = apply_saved_labels(df, saved)
+
+    # Enrutador de pantallas
+    screen = st.session_state.screen
+    if screen == "welcome":
+        screen_welcome(df)
+    elif screen == "validate":
+        screen_validate(df)
+    elif screen == "done":
+        screen_done(df)
+
+
+if __name__ == "__main__":
+    main()
