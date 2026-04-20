@@ -143,6 +143,9 @@ def inject_css():
                     padding:2px 10px; font-size:.72rem; font-weight:500; text-align:center; display:inline-block; }
 
     details summary { font-size:.8rem; color:#888780; cursor:pointer; }
+
+    /* Tooltip nativo: mostrar cursor de ayuda sobre opciones de radio */
+    div[data-testid="stRadio"] label { cursor:help; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -267,10 +270,15 @@ def screen_validate(df):
     total_a   = len(author_df)
     done_n    = len(done_df)
 
+    # Sin pendientes: si llegamos desde "Corregir etiquetas" mostramos el primer
+    # artículo clasificado en modo edición; si no hay ninguno, volvemos a done.
     if len(pending) == 0:
-        st.session_state.screen = "done"
-        st.rerun()
-        return
+        if len(done_df) == 0:
+            st.session_state.screen = "done"
+            st.rerun()
+            return
+        if st.session_state.get("edit_idx") is None:
+            st.session_state.edit_idx = done_df.index[0]
 
     edit_idx = st.session_state.get("edit_idx", None)
     if edit_idx is not None:
@@ -348,25 +356,78 @@ def screen_validate(df):
 
         st.markdown('<div class="sec" style="margin-top:.3rem">Categoría correcta</div>', unsafe_allow_html=True)
 
-        confirm_label = f"✓ Confirmar: {fmt(pred_code)}"
-        other_labels  = [fmt(c) for c in CATEGORIES if c != pred_code]
-        custom_label  = "Otra — ingresar código manualmente"
-        options       = [confirm_label] + other_labels + [custom_label]
+        # ── Construir opciones ──
+        # Opción 0: confirmar predicción del modelo
+        # Opciones 1..N: otras categorías de la taxonomía
+        # Opción N+1: categoría personalizada
+        cat_codes   = list(CATEGORIES.keys())
+        confirm_val = f"__confirm__{pred_code}"
+        custom_val  = "__custom__"
 
-        default_idx = 0
+        # Etiqueta activa que se debe preseleccionar:
+        #   - modo edición  → etiqueta_experto ya guardada
+        #   - modo normal   → pred_zeroshot (predicción del modelo)
         if is_edit_mode and pd.notna(cur_etq) and cur_etq:
-            if cur_etq == pred_code:
-                default_idx = 0
-            elif fmt(cur_etq) in other_labels:
-                default_idx = other_labels.index(fmt(cur_etq)) + 1
-            else:
-                default_idx = len(options) - 1
+            preselect = cur_etq
+        else:
+            preselect = pred_code   # preseleccionar siempre la predicción del modelo
 
-        selection = st.radio("", options=options, index=default_idx, label_visibility="collapsed")
+        # Calcular default_idx
+        if preselect == pred_code:
+            default_idx = 0
+        elif preselect in cat_codes:
+            # índice dentro de cat_codes excluyendo pred_code
+            others = [c for c in cat_codes if c != pred_code]
+            default_idx = others.index(preselect) + 1 if preselect in others else 0
+        else:
+            default_idx = len(cat_codes) + 1  # personalizada
+
+        # Lista de (value, label_corto, descripción_tooltip)
+        radio_items = [(confirm_val, f"✓ Confirmar: {pred_code}", CATEGORIES.get(pred_code, pred_code))]
+        for c in cat_codes:
+            if c != pred_code:
+                radio_items.append((c, c, CATEGORIES[c]))
+        radio_items.append((custom_val, "Otra — ingresar código manualmente", "Ingrese un código arXiv que no aparezca en la lista"))
+
+        values = [v for v, _, _ in radio_items]
+        labels = [l for _, l, _ in radio_items]
+        tips   = [t for _, _, t in radio_items]
+
+        # Clave única por artículo — garantiza que al cambiar de artículo
+        # el radio se inicialice con el default correcto
+        radio_key = f"radio_{original_idx}"
+        if radio_key not in st.session_state:
+            st.session_state[radio_key] = values[default_idx]
+
+        # Streamlit radio con format_func que incluye descripción en el label
+        # El tooltip se muestra como panel descriptivo debajo de la opción activa
+        selection_raw = st.radio(
+            "",
+            options=values,
+            format_func=lambda v: next(
+                (f"{lbl}  —  {tip}" if v not in (confirm_val, custom_val) else lbl)
+                for vv, lbl, tip in radio_items if vv == v
+            ),
+            index=values.index(st.session_state[radio_key]) if st.session_state[radio_key] in values else default_idx,
+            label_visibility="collapsed",
+            key=radio_key,
+        )
+
+        # Descripción tooltip debajo de la opción activa
+        active_tip = next((t for v, _, t in radio_items if v == selection_raw), "")
+        st.markdown(
+            f'<div style="font-size:.72rem;color:#888780;background:#F1EFE8;border-radius:5px;'
+            f'padding:3px 10px;margin:2px 0 6px;line-height:1.4">'
+            f'<b style="color:#444441">{selection_raw if selection_raw not in (confirm_val, custom_val) else (pred_code if selection_raw == confirm_val else "Personalizada")}</b>'
+            f' — {active_tip}</div>',
+            unsafe_allow_html=True,
+        )
+
+        selection = selection_raw  # alias para el bloque de guardado
 
         custom_input = ""
-        if selection == custom_label:
-            default_custom = str(cur_etq) if (is_edit_mode and cur_etq) else ""
+        if selection == custom_val:
+            default_custom = str(cur_etq) if (is_edit_mode and cur_etq and cur_etq not in CATEGORIES) else ""
             custom_input = st.text_input("Código arXiv (ej. cs.DB):", value=default_custom, key="custom_in")
 
         bc1, bc2, _ = st.columns([1.2, 1, 2])
@@ -383,15 +444,15 @@ def screen_validate(df):
                     st.rerun()
 
         if save_clicked:
-            if selection == custom_label:
+            if selection == custom_val:
                 if not custom_input.strip():
                     st.error("Escriba el código de categoría.")
                     return
                 final_label = custom_input.strip()
-            elif selection.startswith("✓"):
+            elif selection == confirm_val:
                 final_label = pred_code
             else:
-                final_label = selection.split(" — ")[0]
+                final_label = selection  # es directamente el código (ej. "cs.LG")
 
             ok = save_label(
                 paper_id=original_idx,
