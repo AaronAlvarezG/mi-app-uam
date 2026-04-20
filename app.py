@@ -444,15 +444,18 @@ def screen_validate(df):
     total_a   = len(author_df)
     done_n    = len(done_df)
 
-    # Sin pendientes: si llegamos desde "Corregir etiquetas" mostramos el primer
-    # artículo clasificado en modo edición; si no hay ninguno, volvemos a done.
+    # Sin pendientes: ir a done, SALVO que el usuario haya llegado
+    # explícitamente desde el botón "Corregir etiquetas" (flag correction_mode).
     if len(pending) == 0:
-        if len(done_df) == 0:
-            st.session_state.screen = "done"
+        if st.session_state.get("correction_mode") and len(done_df) > 0:
+            # Entrar en modo edición sobre el primer artículo clasificado
+            if st.session_state.get("edit_idx") is None:
+                st.session_state.edit_idx = done_df.index[0]
+        else:
+            st.session_state.screen          = "done"
+            st.session_state.correction_mode = False
             st.rerun()
             return
-        if st.session_state.get("edit_idx") is None:
-            st.session_state.edit_idx = done_df.index[0]
 
     edit_idx = st.session_state.get("edit_idx", None)
     if edit_idx is not None:
@@ -702,8 +705,9 @@ def screen_done(df):
             st.rerun()
     with c2:
         if st.button("Corregir etiquetas", use_container_width=True):
-            st.session_state.screen   = "validate"
-            st.session_state.edit_idx = None
+            st.session_state.screen          = "validate"
+            st.session_state.edit_idx        = None
+            st.session_state.correction_mode = True
             st.rerun()
 
 # ─────────────────────────────────────────
@@ -718,10 +722,11 @@ def main():
     inject_css()
 
     if "screen" not in st.session_state:
-        st.session_state.screen    = "welcome"
-        st.session_state.author    = None
-        st.session_state.paper_idx = 0
-        st.session_state.edit_idx  = None
+        st.session_state.screen          = "welcome"
+        st.session_state.author          = None
+        st.session_state.paper_idx       = 0
+        st.session_state.edit_idx        = None
+        st.session_state.correction_mode = False
 
     try:
         df = load_data()
